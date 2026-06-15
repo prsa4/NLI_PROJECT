@@ -1,6 +1,8 @@
 from datasets import Dataset
 from sklearn.metrics import (
     accuracy_score,
+    classification_report,
+    confusion_matrix,
     f1_score
 )
 
@@ -22,6 +24,13 @@ LABEL_ID = {
     "contradiction": 2
 }
 
+LABELS = [
+    "entailment",
+    "neutral",
+    "contradiction"
+]
+
+
 ID_LABEL = {
     0: "entailment",
     1: "neutral",
@@ -33,6 +42,11 @@ def get_tokenizer():
 
 def get_model():
     return AutoModelForSequenceClassification.from_pretrained(MODEL_NAME, num_labels=3, id2label=ID_LABEL, label2id=LABEL_ID)
+    
+def load_model(path):
+    tokenizer = AutoTokenizer.from_pretrained(path)
+    return AutoModelForSequenceClassification.from_pretrained(path), tokenizer
+
 
 def convert_data(data):
     return Dataset.from_pandas(
@@ -104,7 +118,11 @@ def train_epoch(model, train_loader, optimizer,scheduler,device="cuda"):
 
     return average_loss
  
-def evaluate(model, validation_loader, device):
+def evaluate(
+    model,
+    validation_loader,
+    device
+):
     model.eval()
 
     total_loss = 0
@@ -114,67 +132,33 @@ def evaluate(model, validation_loader, device):
 
     with torch.no_grad():
         for batch in validation_loader:
-            batch = {
-                key: value.to(device)
-                for key, value in batch.items()
-            }
+            batch = {key: value.to(device) for key, value in batch.items()}
 
             outputs = model(**batch)
 
             loss = outputs.loss
 
-            pred = torch.argmax(
-                outputs.logits,
-                dim=-1
-            )
+            pred = torch.argmax(outputs.logits, dim=-1)
 
             total_loss += loss.item()
 
-            all_label.extend(
-                batch["labels"]
-                .cpu()
-                .numpy()
-            )
+            all_label.extend(batch["labels"].cpu().numpy())
 
-            all_pred.extend(
-                pred
-                .cpu()
-                .numpy()
-            )
+            all_pred.extend(pred.cpu().numpy())
 
-    average_loss = (
-        total_loss
-        / len(validation_loader)
-    )
+    average_loss = (total_loss / len(validation_loader))
 
-    acc = accuracy_score(
-        all_label,
-        all_pred
-    )
+    acc = accuracy_score(all_label, all_pred)
 
-    f1_macro = f1_score(
-        all_label,
-        all_pred,
-        average="macro",
-        zero_division=0
-    )
+    f1_macro = f1_score(all_label, all_pred, average="macro", zero_division=0)
 
-    f1_conf = f1_score(
-        all_label,
-        all_pred,
-        labels=[
-            LABEL_ID["contradiction"]
-        ],
-        average="macro",
-        zero_division=0
-    )
+    f1_conf = f1_score(all_label, all_pred, labels=[LABEL_ID["contradiction"]], average="macro", zero_division=0)
 
-    return {
-        "loss": average_loss,
-        "accuracy": acc,
-        "f1_macro": f1_macro,
-        "contradiction_f1": f1_conf
-    }
+    report = classification_report(all_label, all_pred, labels=[0, 1, 2], target_names=LABELS, digits=4, zero_division=0)
+
+    matrix = confusion_matrix(all_label, all_pred, labels=[0, 1, 2])
+
+    return {"loss": average_loss, "accuracy": acc, "f1_macro": f1_macro, "contradiction_f1": f1_conf, "class_report": report, "confusion_matrix": matrix}
 
 def train_model(model,tokenizer,train_data, val_data,epochs,train_batch_size, val_batch_size=32,lr=2e-5, path="../models/rubert_tiny_nli"):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -205,3 +189,25 @@ def train_model(model,tokenizer,train_data, val_data,epochs,train_batch_size, va
 
     return model
 
+
+def predict_(model,tokenizer,premise, hypothesis):
+    device = next(model.parameters()).device
+    input = tokenizer(premise,hypothesis,return_tensors="pt", truncation=True, max_length=128)
+    inputs= {k: v.to(device) for k,v in input.items()}
+    model.eval()
+    with torch.no_grad():
+        out = model(**inputs)
+    proba = torch.softmax(out.logits, dim=-1)[0]
+    pred = torch.argmax(proba,dim=-1).item()
+    return {
+            "label": ID_LABEL[pred],
+            "confidence": float(
+                proba[pred]
+            ),
+            "probabilities": {
+                ID_LABEL[class_id]: float(
+                    proba[class_id]
+                )
+                for class_id in ID_LABEL
+            }
+        }
