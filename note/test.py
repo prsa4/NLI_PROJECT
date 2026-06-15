@@ -1,68 +1,102 @@
 import pandas as pd
 import sys
 
-sys.path.append("../src")
-
-from transformer_test import (
-    ID_LABEL,
-    forward_batch,
-    get_data_collator,
-    get_model,
-    get_tokenizer,
-    prepare_data
+from sklearn.model_selection import (
+    train_test_split
 )
 
-train_data = pd.read_csv("../data/filter/train.csv")
-tokenizer=get_tokenizer()
-model=get_model()
 
-token_train_data=prepare_data(train_data.head(),tokenizer)
-print("token_train_data\n", token_train_data)
-data_collator=get_data_collator(tokenizer)
-example = [token_train_data[i] for i in range(5)]
-batch = data_collator(example)
+sys.path.append("../src")
 
-for key, value in batch.items():
-    print(
-        key,
-        value.shape
-    )
 
-outputs,probabilities,pred= forward_batch(model,batch)
+from transformer_test import (
+    get_model,
+    get_tokenizer,
+    prepare_data,
+    train_model
+)
 
-print("\nLoss:")
-print(outputs.loss.item())
 
-print("\nLogits:")
-print(outputs.logits)
+train_data = pd.read_csv(
+    "../data/filter/train.csv"
+)
 
-print("\nВероятности:")
-print(probabilities)
+validation_data = pd.read_csv(
+    "../data/filter/val.csv"
+)
 
-print("\nЧисловые предсказания:")
-print(pred)
 
-print("\nРезультаты по примерам:")
+print("Полный train:")
+print(train_data.shape)
 
-for i in range(len(pred)):
-    true_id = batch["labels"][i].item()
-    pred_id = pred[i].item()
+print("\nValidation:")
+print(validation_data.shape)
 
-    print(f"\nПример {i + 1}")
-    print(
-        "Правильный класс:",
-        ID_LABEL[true_id]
-    )
-    print(
-        "Предсказанный класс:",
-        ID_LABEL[pred_id]
-    )
-    print(
-        "Вероятности:",
-        {
-            ID_LABEL[class_id]: float(
-                probabilities[i][class_id]
-            )
-            for class_id in ID_LABEL
-        }
-    )
+
+small_train_data, _ = train_test_split(
+    train_data,
+    train_size=30000,
+    random_state=42,
+    stratify=train_data["label"]
+)
+
+
+small_train_data = (
+    small_train_data
+    .reset_index(drop=True)
+)
+
+
+print("\nTrain для первого запуска:")
+print(small_train_data.shape)
+
+print("\nКлассы train:")
+print(
+    small_train_data[
+        "label"
+    ].value_counts()
+)
+
+print("\nКлассы validation:")
+print(
+    validation_data[
+        "label"
+    ].value_counts()
+)
+
+
+tokenizer = get_tokenizer()
+
+model = get_model()
+
+
+token_train_data = prepare_data(
+    small_train_data,
+    tokenizer
+)
+
+token_validation_data = prepare_data(
+    validation_data,
+    tokenizer
+)
+
+
+print("\nТокенизированный train:")
+print(token_train_data)
+
+print("\nТокенизированный validation:")
+print(token_validation_data)
+
+
+model = train_model(
+    model,
+    tokenizer,
+    token_train_data,
+    token_validation_data,
+    epochs=2,
+    train_batch_size=16,
+    val_batch_size=32,
+    lr=2e-5,
+    path="../models/rubert_tiny_nli"
+)
+
